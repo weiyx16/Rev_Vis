@@ -13,15 +13,13 @@ from skimage.transform import (hough_line, hough_line_peaks,
 from skimage.feature import canny
 from skimage.color import (rgb2gray, label2rgb)
 from skimage.measure import (label, regionprops)
-from sklearn import metrics
 from sklearn.cluster import KMeans
-from sklearn.datasets import load_digits
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import scale
+from sklearn.linear_model import LinearRegression
 import pyocr
 import pyocr.builders as ocrtools
 import utils.utils as utils
-# import json
+import json
 # import sys
 
 CHART_TYPE = {
@@ -41,7 +39,7 @@ parser.add_argument('-i', '--input_chart_path', default='./data/cropped/B_00.png
                     type=str, help='input chart path')
 
 
-def axes_detection(img_gray, img_height, img_width):
+def lines_detection(img_gray, img_height, img_width):
     ## Sobel
     edge_sobel = sobel(img_gray)
     thresh = threshold_otsu(edge_sobel)
@@ -54,16 +52,16 @@ def axes_detection(img_gray, img_height, img_width):
                                      line_gap=10, theta=np.asarray([-PI/2, 0, PI/2]))
 
     # Save Result
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5), sharex=True, sharey=True)
-    ax = axes.ravel()
-
-    ax[0].imshow(img_gray, cmap=cm.gray)
-    ax[0].set_title('Input image')
-
-    ax[1].imshow(edge_binary, cmap=cm.gray)
-    ax[1].set_title('Sobel edges')
-
-    ax[2].imshow(edge_binary * 0, cmap=cm.gray)
+    # fig, axes = plt.subplots(1, 4, figsize=(20, 5), sharex=True, sharey=True)
+    # ax = axes.ravel()
+    #
+    # ax[0].imshow(img_gray, cmap=cm.gray)
+    # ax[0].set_title('Input image')
+    #
+    # ax[1].imshow(edge_binary, cmap=cm.gray)
+    # ax[1].set_title('Sobel edges')
+    #
+    # ax[2].imshow(edge_binary * 0, cmap=cm.gray)
     line_exist = []
     for line in lines:
         p0, p1 = line
@@ -73,41 +71,26 @@ def axes_detection(img_gray, img_height, img_width):
         else:
             line_exist.append(line)
             # 0 is x and 1 is y
-            ax[2].plot((p0[0], p1[0]), (p0[1], p1[1]))
-    ax[2].set_xlim((0, edge_binary.shape[1]))
-    ax[2].set_ylim((edge_binary.shape[0], 0))
-    ax[2].set_title('Probabilistic Hough with replicated line remove')
+    #         ax[2].plot((p0[0], p1[0]), (p0[1], p1[1]))
+    # ax[2].set_xlim((0, edge_binary.shape[1]))
+    # ax[2].set_ylim((edge_binary.shape[0], 0))
+    # ax[2].set_title('Probabilistic Hough with replicated line remove')
 
-    ax[3].imshow(edge_binary * 0, cmap=cm.gray)
-    axes = []
-    for line_1 in line_exist:
-        for line_2 in line_exist:
-            if line_1 == line_2:
-                continue
-            # first need vertical
-            if (line_1[0][0] == line_1[1][0] and line_2[0][1] == line_2[1][1]) or \
-                    (line_1[0][1] == line_1[1][1] and line_2[0][0] == line_2[1][0]):
-                # second need to share a similar point
-                if points_near(line_1[0], line_2[0]) or points_near(line_1[0], line_2[1]) or \
-                        points_near(line_1[1], line_2[0]) or points_near(line_1[1], line_2[1]):
-                    axes.append(line_1)
-                    axes.append(line_2)
-                    ax[3].plot((line_1[0][0], line_1[1][0]), (line_1[0][1], line_1[1][1]))
-                    ax[3].plot((line_2[0][0], line_2[1][0]), (line_2[0][1], line_2[1][1]))
-                    break
-        if axes is not None:
-            break
-    ax[3].set_xlim((0, edge_binary.shape[1]))
-    ax[3].set_ylim((edge_binary.shape[0], 0))
-    ax[3].set_title('Axes Detection')
+    # axes = axes_extraction(line_exist)
+    # ax[3].imshow(edge_binary * 0, cmap=cm.gray)
+    # ax[3].plot((axes[0][0][0], axes[0][1][0]), (axes[0][0][1], axes[0][1][1]))
+    # ax[3].plot((axes[1][0][0], axes[1][1][0]), (axes[1][0][1], axes[1][1][1]))
+    # ax[3].set_xlim((0, edge_binary.shape[1]))
+    # ax[3].set_ylim((edge_binary.shape[0], 0))
+    # ax[3].set_title('Axes Detection')
+    #
+    # for a in ax:
+    #     a.set_axis_off()
+    # # plt.savefig('edge_gray.png')
+    # plt.tight_layout()
+    # plt.show()
 
-    for a in ax:
-        a.set_axis_off()
-    # plt.savefig('edge_gray.png')
-    plt.tight_layout()
-    plt.show()
-
-    return axes
+    return line_exist
 
     '''
     ## Hough
@@ -175,11 +158,31 @@ def axes_detection(img_gray, img_height, img_width):
     '''
 
 
+def axes_extraction(line_exist):
+    axes = []
+    for line_1 in line_exist:
+        for line_2 in line_exist:
+            if line_1 == line_2:
+                continue
+            # first need vertical
+            if (line_1[0][0] == line_1[1][0] and line_2[0][1] == line_2[1][1]) or \
+                    (line_1[0][1] == line_1[1][1] and line_2[0][0] == line_2[1][0]):
+                # second need to share a similar point
+                if points_near(line_1[0], line_2[0]) or points_near(line_1[0], line_2[1]) or \
+                        points_near(line_1[1], line_2[0]) or points_near(line_1[1], line_2[1]):
+                    axes.append(line_1)
+                    axes.append(line_2)
+                    break
+        if axes is not None:
+            break
+    return axes
+
+
 def repli_lines(line_exist, p0, p1):
     for l in line_exist:
         if (l[0][0] == l[1][0] and p0[0] == p1[0]) or (l[0][1] == l[1][1] and p0[1] == p1[1]):
             if point_in_line_range(l, p0) and point_in_line_range(l, p1):
-                print('Remove Line! Exist Line: {}, Current Line: ({}, {})'.format(l, p0, p1))
+                # print('Remove Line! Exist Line: {}, Current Line: ({}, {})'.format(l, p0, p1))
                 return True
     return False
 
@@ -254,37 +257,96 @@ def ocr(tool, img, cont='txt'):
 
 
 def ocr_image_preprocess(img, rotate_aug=True):
-    img_resized = resize(img, (img.shape[0] * 4, img.shape[1] * 4), anti_aliasing=True)
+    img_resized_3 = resize(img, (img.shape[0] * 3, img.shape[1] * 3), anti_aliasing=True)
+    img_resized_6 = resize(img, (img.shape[0] * 6, img.shape[1] * 6), anti_aliasing=True)
     if rotate_aug:
-        img_pos = rotate(img_resized, PI/2 * Deg_2_Angle, resize=True)
-        img_neg = rotate(img_resized, - PI/2 * Deg_2_Angle, resize=True)
-        return [img_pos, img_neg, img_resized]
+        img_pos_6 = rotate(img_resized_6, PI/2 * Deg_2_Angle, resize=True)
+        img_neg_6 = rotate(img_resized_6, - PI/2 * Deg_2_Angle, resize=True)
+        img_pos_3 = rotate(img_resized_3, PI/2 * Deg_2_Angle, resize=True)
+        img_neg_3 = rotate(img_resized_3, - PI/2 * Deg_2_Angle, resize=True)
+        return [img_pos_6, img_neg_6, img_resized_6, img_pos_3, img_neg_3, img_resized_3]
     else:
-        return [None, None, img_resized]
+        return [None, None, img_resized_6, None, None, img_resized_3]
 
 
-def chart_ocr(img, word_bbox, tool, pad=True):
-    txt = {}
-    for idx, bbox in enumerate(word_bbox):
-        minr, minc, maxr, maxc = bbox
+def chart_ocr(img, word_bbox_role, tool, pad=False):
+    for idx, prop in word_bbox_role.items():
+        minr, minc, maxr, maxc = prop['bbox']
         if pad:
             word_img = np.ones((2*(maxr - minr), 2*(maxc - minc)))
             word_img[(maxr - minr)//2:(maxr - minr)//2 + (maxr - minr),
                         (maxc - minc)//2:(maxc - minc)//2 + (maxc - minc)] = img[minr:maxr, minc:maxc]
         else:
-            word_img = img[minr:maxr, minc:maxc]
+            pad_size = 2
+            word_img = img[minr-pad_size:maxr+pad_size, minc-pad_size:maxc+pad_size]
 
         # im = Image.fromarray((word_img * 255.0).astype('uint8'), mode='L')
         # im.save('./word_bbox_%d.png' % idx)
 
         img_aug = ocr_image_preprocess(word_img, rotate_aug=True)
-        txt[idx] = {'bbox': bbox}
+        txt_cand = {}
         for idx_img, word_img_aug in enumerate(img_aug):
             if word_img_aug is not None:
-                txt[idx]['txt_%d' % idx_img] = ocr(tool, word_img_aug, 'txt')
+                txt_tmp = ocr(tool, word_img_aug, 'txt')
+                if txt_tmp != '':
+                    if txt_tmp not in txt_cand:
+                        txt_cand[txt_tmp] = 0
+                    txt_cand[txt_tmp] += 1
+        if not txt_cand:
+            word_bbox_role[idx]['txt'] = 'UNKNOWN'
+        else:
+            word_bbox_role[idx]['txt'] = list(txt_cand.keys())[list(txt_cand.values()).index(sorted(txt_cand.values())[-1])]
+    return word_bbox_role
 
-        # TODO: Need to vote in all three orientation
-    return txt
+
+def ocr_postprocess(text):
+    # '1O99' -> '1099'
+    # '4o' -> '40'
+    # 'l' -> '1'
+    def is_number(s):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    tmp = text.replace('O', '0')
+    tmp = tmp.replace('o', '0')
+    tmp = tmp.replace('l', '1')
+    if tmp.isdigit():  # tmp.replace('.','',1)
+        text = tmp
+
+    # '1 5%' -> '15%'
+    # '51 ,050' -> '51,050'
+    # '1001 -5000' -> '1001-5000'
+    pos = text.find('1 ')
+    while pos != -1:
+        skip = 2
+
+        # 'Q1 14' -> 'Q1 14'
+        if pos - 1 >= 0 and text[pos - 1] in '0OQ':
+            # pos = text.find('1 ', pos + 2)
+            skip = 2
+            # continue
+
+        # '1 999' -> '1999'
+        if text[pos + 2].isdigit() or text[pos + 2] in ',.-':
+            text = text[:pos + 1] + text[pos + 2:]
+            skip = 1
+
+        pos = text.find('1 ', pos + skip)
+
+    # In Quartz is common to use Q1, Q2, Q3 and Q4
+    # ex. '02' -> 'Q2'
+    # ex. '02 14' -> 'Q2 14'
+    import re
+    if re.match(r'0\d(?:\s|$)', text):
+        text = 'Q' + text[1:]
+
+    # '°/o of keynote' -> '% of keynote'
+    text = text.replace('°/o', '%')
+
+    return text
 
 
 def character_detection(img, name, loc_bias=[0, 0]):
@@ -298,7 +360,8 @@ def character_detection(img, name, loc_bias=[0, 0]):
     chara_bbox_cent = []
     chara_bbox = []
     chara_bbox_area = []
-    for region in regionprops(label_img):
+    # see https://scikit-image.org/docs/0.14.x/release_notes_and_installation.html#deprecations
+    for region in regionprops(label_img, coordinates='xy'):  # remove warning in 0.14 vs 0.16
         # take regions with large enough areas
         if (img_height*img_width) // 9 >= region.bbox_area >= 20 \
                 and (region.major_axis_length < 10.0 * region.minor_axis_length):
@@ -325,7 +388,7 @@ def character_detection(img, name, loc_bias=[0, 0]):
         chara_bbox_area
 
 
-def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img):
+def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img, axes):
     chara_cent = np.asarray(chara_cent)
     chara_bbox_area = np.asarray(chara_bbox_area)
     chara_bbox = np.asarray(chara_bbox)
@@ -334,7 +397,8 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img):
     # kmeans_best = None
     efficiency = []
     inertia_last = 1e10
-    for n_digits in range(1, 15):
+    n_digit_least = 5
+    for n_digits in range(n_digit_least, min(15, n_samples)):
         # print("n_digits: %d, \t n_samples %d, \t n_features %d" % (n_digits, n_samples, n_features))
 
         kmeans = KMeans(init='k-means++', n_clusters=n_digits, n_init=10)
@@ -350,9 +414,9 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img):
         #     min_score = kmeans_score
         #     kmeans_best = kmeans
 
-    last_eff = list(filter(lambda x: x < 0.6, efficiency))[-1]
-    n_digits = efficiency.index(last_eff) + 1
-    print('Pick digit number as: {}' .format(n_digits))
+    last_eff = list(filter(lambda x: x < 2/3, efficiency))[-1]
+    n_digits = efficiency.index(last_eff) + n_digit_least
+    print(' Pick digit number as: {}' .format(n_digits))
     kmeans_best = KMeans(init='k-means++', n_clusters=n_digits, n_init=10)
     kmeans_best.fit(chara_cent, sample_weight=chara_bbox_area)
 
@@ -390,6 +454,20 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img):
             bbox_add_list.append(bbox_cur)
         word_bbox_postproc += bbox_add_list
 
+    # Naive set every words bbox with its role
+    # TODO actually the role should defined not only by its own spatial location, but its relationship with other words
+    # that is: the axis label of one axis is always in one line
+
+    word_bbox_role = {}
+    for idx, bbox in enumerate(word_bbox_postproc):
+        p0, p1 = axes
+        word_bbox_role[idx] = {'bbox': bbox}
+        if (p0[0] == p1[0] and abs(bbox[3] - p0[0]) < 20) or \
+            (p0[1] == p1[1] and abs(bbox[0] - p0[1]) < 20):  # min row and max column
+            word_bbox_role[idx]['role'] = 'axis label'
+        else:
+            word_bbox_role[idx]['role'] = 'axis title'
+
     print(' %d words bounding box detection' % len(word_bbox_postproc))
     plt.figure(1, figsize=(10, 6))
     plt.clf()
@@ -413,10 +491,10 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img):
         ax.add_patch(rect)
 
     plt.title('K-means clustering with words num of %d' % len(word_bbox_postproc))
-    # plt.savefig('word_detection.png')
+    plt.savefig('word_detection.png')
     plt.show()
 
-    return word_bbox_postproc
+    return word_bbox_role
 
 
 def line_overlap(x1, y1, x2, y2, thre=None):
@@ -444,9 +522,117 @@ def bbox_merge(bbox_cur, bbox_add):
     return bbox_cur
 
 
+def axis_map_recover(word_in_chart, axes):
+    axis_prop = {'type': 'qualitative', 'quan_type': 'None', 'quan_map': []}
+
+    p0, p1 = axes
+    if p0[0] == p1[0]:
+        axis_prop['loc'] = 'y'
+    else:
+        axis_prop['loc'] = 'x'
+    axis_prop['loc_pixel'] = axes
+
+    # recover axis type
+    axis_word = {k: v for k, v in word_in_chart.items() if v['role'] == 'axis label'}
+    axis_title = {v['txt']: v['bbox'].tolist() for k, v in word_in_chart.items() if v['role'] == 'axis title'}
+    axis_known_value = []
+    axis_known_loc = []
+    for _, v in axis_word.items():
+        txt = v['txt']
+        bbox = v['bbox']
+        if txt != 'UNKNOWN' and txt.isdigit():
+            axis_prop['type'] = 'quantitative'
+            if axis_prop['loc'] == 'y':
+                axis_known_loc.append((bbox[0] + bbox[2]) / 2)  # row -> value
+            else:
+                axis_known_loc.append((bbox[1] + bbox[3]) / 2)  # column -> value
+            axis_known_value.append(float(txt))
+
+    # recover axis pixel to value map
+    if axis_prop['type'] == 'quantitative':
+        if len(axis_known_value) <= 1:
+            print( ' \n Error during recover quantitative axis value: '
+                   ' \n     because less than 2 axis values are detected by OCR!')
+        else:
+            if len(axis_known_value) == 2:
+                print( ' \n Warning during recover quantitative axis value: '
+                       ' \n     because only 2 axis values are detected by OCR'
+                       ' \n     treat it as linear axis value here!')
+
+            # take pixel_loc as x and txt as y -> function only support linear map for now
+            LR_reg = LinearRegression().fit(np.asarray(axis_known_loc).reshape(-1, 1), np.asarray(axis_known_value))
+            k = float(LR_reg.coef_)
+            b = float(LR_reg.intercept_)
+            axis_prop['quan_type'] = 'Linear'
+            axis_prop['quan_map'] = [k, b]
+            print(' Predict axis function as {} * x + {}'.format(k, b))
+
+            # recover undetected axis label
+            for idx, v in axis_word.items():
+                txt = v['txt']
+                bbox = v['bbox']
+                if txt == 'UNKNOWN':
+                    if axis_prop['loc'] == 'y':
+                        loc = (bbox[0] + bbox[2]) / 2  # row -> value
+                    else:
+                        loc = (bbox[1] + bbox[3]) / 2  # column -> value
+                    value = k * loc + b
+                    axis_word[idx]['txt'] = int(round(value))
+
+    axis_word_tmp = axis_word
+    axis_word = {v['txt']: v['bbox'].tolist() for k, v in axis_word_tmp.items()}
+
+    axis_prop['title'] = axis_title
+    axis_prop['label'] = axis_word
+
+    return axis_prop
+
+
+def bar_extraction(img_gray, axis_x, axis_y, img_height, img_width):
+    ## Mask
+    down_bound = axis_x[0][1]
+    left_bound = axis_y[0][0]
+    img = np.ones_like(img_gray)
+    pad_size = 2
+    img[:down_bound - pad_size, left_bound + pad_size:] = img_gray[:down_bound - pad_size, left_bound + pad_size:]
+
+    ## Sobel
+    edge_sobel = sobel(img)
+    thresh = threshold_otsu(edge_sobel)
+    edge_binary = edge_sobel > thresh
+
+    lines = probabilistic_hough_line(edge_binary, threshold=50, line_length=10,
+                                     line_gap=10, theta=np.asarray([-PI/2, PI/2]))  # only need horizontal ones
+
+    line_exist = []
+    for line in lines:
+        p0, p1 = line
+        # remove the replicated lines
+        if repli_lines(line_exist, p0, p1) or abs(p0[1] - down_bound) < 10:
+            continue
+        else:
+            line_exist.append(line)
+
+    return line_exist
+
+
+def bar_value_extraction(bar_lines, axis_x, axis_y):
+    data_prop = {}
+    if axis_y['quan_type'] == 'Linear':
+        k = axis_y['quan_map'][0]
+        b = axis_y['quan_map'][1]
+    for axis_x_label, axis_x_label_loc in axis_x['label'].items():
+        axis_x_label_cen = (axis_x_label_loc[1] + axis_x_label_loc[3])/2
+        for bar_line in bar_lines:
+            if min(bar_line[0][0], bar_line[1][0]) <= axis_x_label_cen <= max(bar_line[0][0], bar_line[1][0]):
+                data_prop[axis_x_label] = k * bar_line[0][1] + b
+                break
+    return data_prop
+
+
 def main(args):
 
-    # load image first
+    ### load image first
     _, img_name = os.path.split(args.input_chart_path)
     assert CHART_TYPE[img_name[0]] == args.type, 'Input chart type different from the chart'
     try:
@@ -462,12 +648,13 @@ def main(args):
     else:
         print(' Loaded chart from {}' .format(args.input_chart_path))
 
-    # axes_detection
-    axes_line = axes_detection(img_gray, img_height, img_width)
+    ### axes_detection
+    chart_line = lines_detection(img_gray, img_height, img_width)
+    axes_line = axes_extraction(chart_line)
     axes_line = axes_line[:2]
     print(' Axes location detected with location of {}'.format(axes_line))
 
-    # OCR for printed text detection
+    ### OCR for printed text detection
     # run in bash: tesseract ~/gray.png stdout (# --tessdata-dir /n/home06/ywei1998/tesseract/share/tessdata)
 
     tool = pyocr.get_available_tools()[0]
@@ -477,30 +664,40 @@ def main(args):
         p0, p1 = line
         if p0[0] == p1[0]:
             # left of y-axis
-            img_left_y = np.zeros((img_binary.shape[0], p0[0]), dtype='uint8')
-            img_left_y = img_binary[:, :p0[0]]
-
+            img_left_y = np.zeros((img_binary.shape[0], p0[0] - 2), dtype='uint8')
+            img_left_y = img_binary[:, :p0[0] - 2]
             chara_cent, chara_bbox, chara_bbox_area = character_detection(img_left_y, 'conn_comp_left_y.png', [0, 0])
-
-            word_bbox = character_cluster(chara_cent, chara_bbox, chara_bbox_area, img_binary)
-
-            word_in_chart = chart_ocr(img_gray, word_bbox, tool)
-            print(" TXT for left from OCR {}".format(word_in_chart))
+            word_bbox_role = character_cluster(chara_cent, chara_bbox, chara_bbox_area, img_binary, line)
+            word_in_chart = chart_ocr(img_gray, word_bbox_role, tool)
+            print(word_in_chart)
+            axis_prop_y = axis_map_recover(word_in_chart, line)
 
         if p0[1] == p1[1]:
             # down of x-axis
-            img_down_x = np.zeros((img_binary.shape[0] - p0[1], img_binary.shape[1]), dtype='uint8')
-            img_down_x = img_binary[p0[1]:-1, :]
-
+            img_down_x = np.zeros((img_binary.shape[0] - p0[1] - 2, img_binary.shape[1]), dtype='uint8')
+            img_down_x = img_binary[p0[1] + 2:, :]
             chara_cent, chara_bbox, chara_bbox_area = character_detection(img_down_x, 'conn_comp_down_x.png', [p0[1], 0])
-
-            word_bbox =character_cluster(chara_cent, chara_bbox, chara_bbox_area, img_binary)
-
-            word_in_chart = chart_ocr(img_gray, word_bbox, tool)
-            print(" TXT for down from OCR {}".format(word_in_chart))
-
+            word_bbox_role = character_cluster(chara_cent, chara_bbox, chara_bbox_area, img_binary, line)
+            word_in_chart = chart_ocr(img_gray, word_bbox_role, tool)
+            print(word_in_chart)
+            axis_prop_x = axis_map_recover(word_in_chart, line)
             # im = Image.fromarray((img_down_x * 255.0).astype('uint8'), mode='L')
             # im.save('./img_down_x.png')
+
+    ### Plot data extraction
+    ## Bar Chart
+    bar_lines = bar_extraction(img_gray, axis_prop_x['loc_pixel'], axis_prop_y['loc_pixel'], img_height, img_width)
+    data_prop = bar_value_extraction(bar_lines, axis_prop_x, axis_prop_y)
+
+    # Merge dict: https://www.geeksforgeeks.org/python-merging-two-dictionaries/
+    ### create chart json file
+    chart_json = {'chart_name': img_name[:-4], 'chart_python': args.input_chart_path, 'chart_type': args.type,
+                  'chart_data': data_prop, 'axis_1': axis_prop_x, 'axis_2': axis_prop_y}
+    json_data = json.dumps(chart_json)
+    with open('./%s_result.json' % img_name[:-4], 'w') as outfile:
+        json.dump(chart_json, outfile, indent=4)
+
+    print(' Write json from chart to {}' .format('./%s_result.json' % img_name[:-4]))
 
 
 if __name__ == '__main__':

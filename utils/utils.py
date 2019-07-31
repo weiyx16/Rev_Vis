@@ -9,3 +9,6 @@ def mkdir_save(paths):
         if not os.path.exists(paths):
             os.makedirs(paths)
 
+def merge_dict(dict1, dict2):
+    res = {**dict1, **dict2}
+    return res
