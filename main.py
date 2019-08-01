@@ -9,10 +9,12 @@ import matplotlib.patches as mpatches
 from skimage import io as IMGIO
 from skimage.filters import (sobel, threshold_otsu)
 from skimage.transform import (hough_line, hough_line_peaks,
-                               probabilistic_hough_line, resize, rotate)
-from skimage.feature import canny
+                               probabilistic_hough_line, resize, rotate,
+                               hough_circle, hough_circle_peaks)
+from skimage.feature import canny, corner_harris, corner_peaks, corner_subpix
 from skimage.color import (rgb2gray, label2rgb)
 from skimage.measure import (label, regionprops)
+from skimage.draw import circle_perimeter
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
@@ -48,8 +50,9 @@ def lines_detection(img_gray, img_height, img_width):
     # im = Image.fromarray((edge_binary * 255.0).astype('uint8'), mode='L')
     # im.save('./edge.png')
 
-    lines = probabilistic_hough_line(edge_binary, threshold=50, line_length=min(img_height, img_width)//2,
+    lines = probabilistic_hough_line(edge_binary, threshold=50, line_length=50, #min(img_height, img_width)//2,
                                      line_gap=10, theta=np.asarray([-PI/2, 0, PI/2]))
+    ## TODO: It seems that the dot on the axis will interrupt the line detection of image....
 
     # Save Result
     # fig, axes = plt.subplots(1, 4, figsize=(20, 5), sharex=True, sharey=True)
@@ -66,16 +69,13 @@ def lines_detection(img_gray, img_height, img_width):
     for line in lines:
         p0, p1 = line
         # remove the replicated lines
-        if repli_lines(line_exist, p0, p1):
-            continue
-        else:
-            line_exist.append(line)
-            # 0 is x and 1 is y
+        line_exist = repli_lines(line_exist, p0, p1)
+        # 0 is x and 1 is y
     #         ax[2].plot((p0[0], p1[0]), (p0[1], p1[1]))
     # ax[2].set_xlim((0, edge_binary.shape[1]))
     # ax[2].set_ylim((edge_binary.shape[0], 0))
     # ax[2].set_title('Probabilistic Hough with replicated line remove')
-
+    #
     # axes = axes_extraction(line_exist)
     # ax[3].imshow(edge_binary * 0, cmap=cm.gray)
     # ax[3].plot((axes[0][0][0], axes[0][1][0]), (axes[0][0][1], axes[0][1][1]))
@@ -86,7 +86,7 @@ def lines_detection(img_gray, img_height, img_width):
     #
     # for a in ax:
     #     a.set_axis_off()
-    # # plt.savefig('edge_gray.png')
+    # plt.savefig('edge_gray.png')
     # plt.tight_layout()
     # plt.show()
 
@@ -179,11 +179,34 @@ def axes_extraction(line_exist):
 
 
 def repli_lines(line_exist, p0, p1):
-    for l in line_exist:
-        if (l[0][0] == l[1][0] and p0[0] == p1[0]) or (l[0][1] == l[1][1] and p0[1] == p1[1]):
+    add_flag = True
+    for idx, l in enumerate(line_exist):
+        if paral_line(l, (p0, p1)):
             if point_in_line_range(l, p0) and point_in_line_range(l, p1):
                 # print('Remove Line! Exist Line: {}, Current Line: ({}, {})'.format(l, p0, p1))
-                return True
+                return line_exist
+            # Need to replace?
+            # line_exist[idx] = (p0, p1)
+
+    if add_flag:
+        line_exist.append((p0, p1))
+
+    line_exist = list(dict.fromkeys(line_exist))
+    return line_exist
+
+
+def paral_line(line_1, line_2, thre=2e-2):
+    line_1_p1, line_1_p2 = sorted(line_1)
+    line_2_p1, line_2_p2 = sorted(line_2)
+    if (line_1_p1[0] == line_1_p2[0]) and (line_2_p1[0] == line_2_p2[0]):
+        return True
+    elif (line_1_p1[0] == line_1_p2[0]) or (line_2_p1[0] == line_2_p2[0]):
+        return False
+    else:
+        k_1 = (line_1_p2[1] - line_1_p1[1]) / (line_1_p2[0] - line_1_p1[0])
+        k_2 = (line_2_p2[1] - line_2_p1[1]) / (line_2_p2[0] - line_2_p1[0])
+        if abs(k_1 - k_2) < thre:
+            return True
     return False
 
 
@@ -193,8 +216,8 @@ def point_in_line_range(l, p):
     return False
 
 
-def points_near(p1, p2, dist=30):
-    if (abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])) < dist:
+def points_near(p1, p2, dist=50):
+    if (abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])) <= dist:
         return True
     return False
 
@@ -269,7 +292,24 @@ def ocr_image_preprocess(img, rotate_aug=True):
         return [None, None, img_resized_6, None, None, img_resized_3]
 
 
+def ocr_postprocess(txt, loc, loc_bias, word_bbox_unexcept, role, len_begin):
+    txt = txt.replace(',', '')  # 1,000->1000
+    # if '\n' in txt:
+    #     txt = txt.split('\n')
+    #     txt = [word for word in txt if word != '']
+    #     word_bbox_unexcept_len = len(word_bbox_unexcept)
+    #     for word_idx, word in enumerate(txt):
+    #         word_bbox_unexcept[word_bbox_unexcept_len+len_begin+word_idx] = {'bbox': loc+loc_bias,
+    #                                                                         'txt': word,
+    #                                                                         'role': role}
+    #     return word_bbox_unexcept, txt, True
+    # else:
+    return word_bbox_unexcept, txt, False
+
+
 def chart_ocr(img, word_bbox_role, tool, pad=False):
+    word_bbox_except_len = len(word_bbox_role.values())
+    word_bbox_unexcept = {}
     for idx, prop in word_bbox_role.items():
         minr, minc, maxr, maxc = prop['bbox']
         if pad:
@@ -295,58 +335,16 @@ def chart_ocr(img, word_bbox_role, tool, pad=False):
         if not txt_cand:
             word_bbox_role[idx]['txt'] = 'UNKNOWN'
         else:
-            word_bbox_role[idx]['txt'] = list(txt_cand.keys())[list(txt_cand.values()).index(sorted(txt_cand.values())[-1])]
+            ocr_voted = list(txt_cand.keys())[list(txt_cand.values()).index(sorted(txt_cand.values())[-1])]
+            word_bbox_unexcept, ocr_voted, add_flag = \
+                ocr_postprocess(ocr_voted, prop['bbox'], prop['bbox'], word_bbox_unexcept, prop['role'], word_bbox_except_len)
+            if not add_flag:
+                word_bbox_role[idx]['txt'] = ocr_voted
+
+    if word_bbox_unexcept:
+        word_bbox_role = utils.merge_dict(word_bbox_role, word_bbox_unexcept)
+
     return word_bbox_role
-
-
-def ocr_postprocess(text):
-    # '1O99' -> '1099'
-    # '4o' -> '40'
-    # 'l' -> '1'
-    def is_number(s):
-        try:
-            float(s)
-            return True
-        except ValueError:
-            return False
-
-    tmp = text.replace('O', '0')
-    tmp = tmp.replace('o', '0')
-    tmp = tmp.replace('l', '1')
-    if tmp.isdigit():  # tmp.replace('.','',1)
-        text = tmp
-
-    # '1 5%' -> '15%'
-    # '51 ,050' -> '51,050'
-    # '1001 -5000' -> '1001-5000'
-    pos = text.find('1 ')
-    while pos != -1:
-        skip = 2
-
-        # 'Q1 14' -> 'Q1 14'
-        if pos - 1 >= 0 and text[pos - 1] in '0OQ':
-            # pos = text.find('1 ', pos + 2)
-            skip = 2
-            # continue
-
-        # '1 999' -> '1999'
-        if text[pos + 2].isdigit() or text[pos + 2] in ',.-':
-            text = text[:pos + 1] + text[pos + 2:]
-            skip = 1
-
-        pos = text.find('1 ', pos + skip)
-
-    # In Quartz is common to use Q1, Q2, Q3 and Q4
-    # ex. '02' -> 'Q2'
-    # ex. '02 14' -> 'Q2 14'
-    import re
-    if re.match(r'0\d(?:\s|$)', text):
-        text = 'Q' + text[1:]
-
-    # '°/o of keynote' -> '% of keynote'
-    text = text.replace('°/o', '%')
-
-    return text
 
 
 def character_detection(img, name, loc_bias=[0, 0]):
@@ -397,7 +395,7 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img, axes):
     # kmeans_best = None
     efficiency = []
     inertia_last = 1e10
-    n_digit_least = 5
+    n_digit_least = 12
     for n_digits in range(n_digit_least, min(15, n_samples)):
         # print("n_digits: %d, \t n_samples %d, \t n_features %d" % (n_digits, n_samples, n_features))
 
@@ -414,6 +412,7 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img, axes):
         #     min_score = kmeans_score
         #     kmeans_best = kmeans
 
+    print(efficiency)
     last_eff = list(filter(lambda x: x < 2/3, efficiency))[-1]
     n_digits = efficiency.index(last_eff) + n_digit_least
     print(' Pick digit number as: {}' .format(n_digits))
@@ -491,7 +490,7 @@ def character_cluster(chara_cent, chara_bbox, chara_bbox_area, img, axes):
         ax.add_patch(rect)
 
     plt.title('K-means clustering with words num of %d' % len(word_bbox_postproc))
-    plt.savefig('word_detection.png')
+    # plt.savefig('word_detection.png')
     plt.show()
 
     return word_bbox_role
@@ -571,13 +570,13 @@ def axis_map_recover(word_in_chart, axes):
             for idx, v in axis_word.items():
                 txt = v['txt']
                 bbox = v['bbox']
-                if txt == 'UNKNOWN':
+                if txt == 'UNKNOWN' or (not txt.isdigit()):
                     if axis_prop['loc'] == 'y':
                         loc = (bbox[0] + bbox[2]) / 2  # row -> value
                     else:
                         loc = (bbox[1] + bbox[3]) / 2  # column -> value
                     value = k * loc + b
-                    axis_word[idx]['txt'] = int(round(value))
+                    axis_word[idx]['txt'] = str(int(round(value)))
 
     axis_word_tmp = axis_word
     axis_word = {v['txt']: v['bbox'].tolist() for k, v in axis_word_tmp.items()}
@@ -630,6 +629,150 @@ def bar_value_extraction(bar_lines, axis_x, axis_y):
     return data_prop
 
 
+def corner_extraction(img_bin, axis_x, axis_y):
+
+    ## Mask
+    down_bound = axis_x[0][1]
+    left_bound = axis_y[0][0]
+    img = np.zeros_like(img_bin)
+    pad_size = 2
+    img[:down_bound - pad_size, left_bound + pad_size:] = img_bin[:down_bound - pad_size, left_bound + pad_size:]
+
+    corners = corner_peaks(corner_harris(img, k=0.05), min_distance=20)
+    corners = corner_process(corners)
+    coords_subpix = corner_subpix(img, corners, window_size=13)
+
+    # fig, ax = plt.subplots(figsize=(10, 6), sharex=True, sharey=True)
+    # ax.imshow(img, cmap=cm.gray)
+    # ax.set_title('Corner Detection')
+    # ax.plot(corners[:, 1], corners[:, 0], '.b', markersize=10)
+    # ax.plot(coords_subpix[:, 1], coords_subpix[:, 0], '+r', markersize=15)
+    # ax.set_axis_off()
+    # plt.savefig('corner_plot.png')
+    # plt.tight_layout()
+    # plt.show()
+
+    return corners
+
+
+def corner_process(corners):
+    # remove corner in the same line
+    corners = sorted(corners[:, ::-1].tolist())  # sort with column value
+    corner_post = []
+    for corner in corners:
+        if len(corner_post) < 2:
+            corner_post.append(corner)
+        else:
+            cor_1 = corner_post[-1]
+            cor_2 = corner_post[-2]
+            if paral_line((cor_1, cor_2), (cor_1, corner), 5e-2) or paral_line((cor_1, cor_2), (cor_2, corner), 5e-2) \
+                    or paral_line((cor_1, corner), (cor_2, corner), 5e-2):
+                corner_post[-1] = corner
+            else:
+                corner_post.append(corner)
+
+    return np.asarray(corner_post)[:, ::-1]
+
+
+def line_value_extraction(corners, axis_x, axis_y):
+    data_prop = {}
+    if axis_y['quan_type'] == 'Linear':
+        k = axis_y['quan_map'][0]
+        b = axis_y['quan_map'][1]
+    idx_begin = 0
+    for axis_x_label, axis_x_label_loc in axis_x['label'].items():
+        axis_x_label_cen = (axis_x_label_loc[1] + axis_x_label_loc[3])/2
+        for idx in range(idx_begin, len(corners)):
+            cor_l = corners[idx]
+            cor_r = corners[idx+1]
+            pad_size = 5
+            if (cor_l[1] - pad_size) <= axis_x_label_cen < (cor_r[1] + pad_size):
+                axis_x_label_y = (axis_x_label_cen - cor_l[1]) / (cor_r[1] - cor_l[1]) * (cor_r[0] - cor_l[0])
+                axis_x_label_y += cor_l[0]
+                data_prop[axis_x_label] = k * axis_x_label_y + b
+                idx_begin = idx
+                break
+    return data_prop
+
+
+def dot_detection(img_gray, axis_x, axis_y):
+    ## Mask
+    img_height, img_weight = img_gray.shape
+    down_bound = axis_x[0][1]
+    left_bound = axis_y[0][0]
+    background = np.max(img_gray)
+    img = np.zeros_like(img_gray)
+    pad_size = 0
+    img[:down_bound - pad_size, left_bound + pad_size:] = background - img_gray[:down_bound - pad_size, left_bound + pad_size:]
+
+    thresh = threshold_otsu(img)
+    img = img > thresh  # [False or True] bool
+
+    label_img, label_num = label(img, neighbors=None, background=None, return_num=True, connectivity=None)
+    circle_radius = []
+    regions = regionprops(label_img, coordinates='xy')
+    for region in regions:  # remove warning in 0.14 vs 0.16
+        # take regions with large enough areas
+        if region.bbox_area >= 20:
+            circle_radius.append(region.equivalent_diameter//2)
+    circle_r = max(set(circle_radius), key = circle_radius.count)
+    print(' Most Radius: {}, and smallest radius: {}' .format(circle_r, sorted(circle_radius)[0]))
+    label_centers = []
+    idx = 0
+    for region in regions:
+        if abs(region.equivalent_diameter//2 - circle_r) > 1:
+            label_patch = region.image
+            label_patch = resize(label_patch, (label_patch.shape[0]*2, label_patch.shape[1]*2), anti_aliasing=True)
+            # edge_sobel = sobel(label_patch)
+            # thresh = threshold_otsu(edge_sobel)
+            # edges = edge_sobel > thresh
+            edges = canny(label_patch)
+            hough_radii = np.asarray([circle_r * 2])  # np.arange(circle_r-1, circle_r+2)
+            hough_res = hough_circle(edges, hough_radii)
+            _, cx, cy, _ = hough_circle_peaks(hough_res, hough_radii, threshold=2/3 * np.max(hough_res))
+            min_r, min_c, max_r, max_c = region.bbox
+            cx = list(map(lambda x: x/2+min_c, cx))
+            cy = list(map(lambda x: x/2+min_r, cy))
+
+            for centroid in zip(cy, cx):
+                label_centers.append(centroid)
+        else:
+            label_centers.append(region.centroid)
+    print('{} Circles detected'.format(len(label_centers)))
+
+    # Draw them
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(10, 6))
+    image_label_overlay = label2rgb(label_img, image=img)
+    for label_center in label_centers:
+        center_y, center_x = label_center
+        circy, circx = circle_perimeter(int(center_y), int(center_x), int(circle_r), shape=[int(img_height), int(img_weight)])
+        image_label_overlay[circy, circx] = (220, 20, 20)
+    ax.set_title('Circle Detection')
+    ax.imshow(image_label_overlay, cmap=plt.cm.gray)
+    # plt.savefig('Circle_plot.png')
+    plt.show()
+
+    return label_centers
+
+
+def dot_value_extraction(dots, axis_x, axis_y):
+    data_prop = {}
+    data_prop['Dot number'] = len(dots)
+    if axis_y['quan_type'] == 'Linear':
+        k_y = axis_y['quan_map'][0]
+        b_y = axis_y['quan_map'][1]
+    if axis_x['quan_type'] == 'Linear':
+        k_x = axis_x['quan_map'][0]
+        b_x = axis_x['quan_map'][1]
+
+    for idx, dot in enumerate(dots):
+        center_y, center_x = dot
+        X = center_x * k_x + b_x
+        Y = center_y * k_y + b_y
+        data_prop[idx] = {'loc': dot, 'x_value': X, 'y_value': Y}
+    return data_prop
+
+
 def main(args):
 
     ### load image first
@@ -650,7 +793,13 @@ def main(args):
 
     ### axes_detection
     chart_line = lines_detection(img_gray, img_height, img_width)
+    if args.type == 'dot':
+        chart_line = [((136, 589), (136, 140)), ((136, 589), (684,589))]
+    print(chart_line)
+
     axes_line = axes_extraction(chart_line)
+    assert len(axes_line) >= 2, ' Error During Axes Detection. ' \
+                                ' \n No two axes detected'
     axes_line = axes_line[:2]
     print(' Axes location detected with location of {}'.format(axes_line))
 
@@ -664,30 +813,45 @@ def main(args):
         p0, p1 = line
         if p0[0] == p1[0]:
             # left of y-axis
-            img_left_y = np.zeros((img_binary.shape[0], p0[0] - 2), dtype='uint8')
-            img_left_y = img_binary[:, :p0[0] - 2]
+            img_left_y = np.zeros((img_binary.shape[0], p0[0]), dtype='uint8')
+            img_left_y = img_binary[:, :p0[0]]
             chara_cent, chara_bbox, chara_bbox_area = character_detection(img_left_y, 'conn_comp_left_y.png', [0, 0])
             word_bbox_role = character_cluster(chara_cent, chara_bbox, chara_bbox_area, img_binary, line)
             word_in_chart = chart_ocr(img_gray, word_bbox_role, tool)
             print(word_in_chart)
             axis_prop_y = axis_map_recover(word_in_chart, line)
+            print(axis_prop_y)
 
         if p0[1] == p1[1]:
             # down of x-axis
-            img_down_x = np.zeros((img_binary.shape[0] - p0[1] - 2, img_binary.shape[1]), dtype='uint8')
-            img_down_x = img_binary[p0[1] + 2:, :]
+            img_down_x = np.zeros((img_binary.shape[0] - p0[1], img_binary.shape[1]), dtype='uint8')
+            img_down_x = img_binary[p0[1]:, :]
             chara_cent, chara_bbox, chara_bbox_area = character_detection(img_down_x, 'conn_comp_down_x.png', [p0[1], 0])
             word_bbox_role = character_cluster(chara_cent, chara_bbox, chara_bbox_area, img_binary, line)
             word_in_chart = chart_ocr(img_gray, word_bbox_role, tool)
             print(word_in_chart)
             axis_prop_x = axis_map_recover(word_in_chart, line)
+            print(axis_prop_x)
             # im = Image.fromarray((img_down_x * 255.0).astype('uint8'), mode='L')
             # im.save('./img_down_x.png')
 
     ### Plot data extraction
-    ## Bar Chart
-    bar_lines = bar_extraction(img_gray, axis_prop_x['loc_pixel'], axis_prop_y['loc_pixel'], img_height, img_width)
-    data_prop = bar_value_extraction(bar_lines, axis_prop_x, axis_prop_y)
+    if args.type == 'bar':
+        ## Bar Chart
+        bar_lines = bar_extraction(img_gray, axis_prop_x['loc_pixel'], axis_prop_y['loc_pixel'], img_height, img_width)
+        data_prop = bar_value_extraction(bar_lines, axis_prop_x, axis_prop_y)
+
+    if args.type == 'line':
+        ## Line_Chart
+        corners = corner_extraction(img_binary, axis_prop_x['loc_pixel'], axis_prop_y['loc_pixel'])
+        data_prop = line_value_extraction(corners, axis_prop_x, axis_prop_y)
+
+    if args.type == 'dot':
+        dots = dot_detection(img_gray, axis_prop_x['loc_pixel'], axis_prop_y['loc_pixel'])
+        data_prop = dot_value_extraction(dots, axis_prop_x, axis_prop_y)
+
+    else:
+        raise Exception(' \n Unsupported chart type input')
 
     # Merge dict: https://www.geeksforgeeks.org/python-merging-two-dictionaries/
     ### create chart json file
