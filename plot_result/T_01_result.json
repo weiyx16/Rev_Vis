@@ -1,0 +1,30 @@
+{
+    "chart_name": "T_01",
+    "chart_python": "./data/cropped/T_01.png",
+    "chart_type": "table",
+    "chart_data": {
+        "Sedan": "29.40",
+        "SuUv": "1.54",
+        "Sports Car": "25.78",
+        "Wagon": "27.79",
+        "Minivan": "24.45"
+    },
+    "axis_1": {
+        "title": "Type",
+        "title location": [
+            28,
+            80,
+            43,
+            207
+        ]
+    },
+    "axis_2": {
+        "title": "ighway Miles Per Gallon",
+        "title location": [
+            27,
+            210,
+            43,
+            398
+        ]
+    }
+}
